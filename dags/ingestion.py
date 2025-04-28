@@ -7,6 +7,7 @@ import re
 import logging
 import json
 
+# Default arguments for the DAG
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -16,20 +17,23 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
+# Dataset for logging counts
 log_counts_dataset = Dataset("log_counts")
 
+# Task: Fetch log file
 def fetch_log_file():
     url = "https://s3.amazonaws.com/ds2002-resources/data/messy.log"
     response = requests.get(url)
     response.raise_for_status()
     return response.text
 
+# Task: Clean log file
 def clean_log_file(**context):
     log_content = context['ti'].xcom_pull(task_ids='fetch_log_file')
     
     # Remove blank lines and lines with only integers
     lines = [line for line in log_content.split('\n') 
-            if line.strip() and not re.match(r'^\s*\d+\s*$', line)]
+             if line.strip() and not re.match(r'^\s*\d+\s*$', line)]
     
     # Remove meaningless ":......" patterns
     cleaned_lines = []
@@ -39,6 +43,7 @@ def clean_log_file(**context):
     
     return '\n'.join(cleaned_lines)
 
+# Task: Count log types
 def count_log_types(**context):
     cleaned_content = context['ti'].xcom_pull(task_ids='clean_log_file')
     lines = cleaned_content.split('\n')
@@ -60,6 +65,7 @@ def count_log_types(**context):
         'proterr_count': proterr_count
     }
 
+# Task: Store log counts and cleaned log file
 def store_log_counts(**context):
     counts = context['ti'].xcom_pull(task_ids='count_log_types')
     cleaned_content = context['ti'].xcom_pull(task_ids='clean_log_file')
@@ -71,10 +77,10 @@ def store_log_counts(**context):
         'counts': counts
     }
     
-    # Store the dataset
+    # Store the dataset in XCom
     context['ti'].xcom_push(key='log_counts', value=json.dumps(dataset_content))
     
-    # Save cleaned data to file
+    # Save cleaned data to a file
     filename = f"/tmp/cleaned_log_{timestamp.replace(':', '-')}.txt"
     with open(filename, 'w') as f:
         f.write(cleaned_content)
@@ -85,7 +91,8 @@ def store_log_counts(**context):
     
     return dataset_content
 
-    with DAG(
+# Define the DAG
+with DAG(
     'process_logs',
     default_args=default_args,
     description='A DAG to process and analyze log files',
@@ -94,6 +101,7 @@ def store_log_counts(**context):
     catchup=False,
 ) as dag:
 
+    # Define the tasks
     fetch_task = PythonOperator(
         task_id='fetch_log_file',
         python_callable=fetch_log_file,
@@ -115,6 +123,5 @@ def store_log_counts(**context):
         outlets=[log_counts_dataset],
     )
 
-    fetch_task >> clean_task >> count_task >> store_task 
-
-    
+    # Set task dependencies
+    fetch_task >> clean_task >> count_task >> store_task
